@@ -23,7 +23,7 @@ jobs:
         with:
           branch: 'main'
           force: true
-          git_remote_url: 'ssh://dokku@staging.discours.io:22/txtai'
+          git_remote_url: 'ssh://dokku@staging.discours.io:22/search-txtai'
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           git_push_flags: '--force'
 
@@ -32,6 +32,6 @@ jobs:
         uses: dokku/github-action@master
         with:
           branch: 'dev'
-          git_remote_url: 'ssh://dokku@v2.discours.io:22/txtai'
+          git_remote_url: 'ssh://dokku@v2.discours.io:22/search-txtai'
           ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
           git_push_flags: '--force'

@@ -1,0 +1,37 @@
+name: 'Deploy txtai API'
+on: [push]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cloning repo
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Get Repo Name
+        id: repo_name
+        run: echo "::set-output name=repo::$(echo ${GITHUB_REPOSITORY##*/})"
+
+      - name: Get Branch Name
+        id: branch_name
+        run: echo "::set-output name=branch::$(echo ${GITHUB_REF##*/})"
+
+      - name: Push to staging for dev branch
+        if: github.ref == 'refs/heads/dev'
+        uses: dokku/github-action@master
+        with:
+          branch: 'main'
+          force: true
+          git_remote_url: 'ssh://dokku@staging.discours.io:22/txtai'
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          git_push_flags: '--force'
+
+      - name: Push to v2 for main branch
+        if: github.ref == 'refs/heads/main'
+        uses: dokku/github-action@master
+        with:
+          branch: 'dev'
+          git_remote_url: 'ssh://dokku@v2.discours.io:22/txtai'
+          ssh_private_key: ${{ secrets.SSH_PRIVATE_KEY }}
+          git_push_flags: '--force'

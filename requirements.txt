@@ -1,0 +1,13 @@
+txtai
+sentence-transformers
+fastapi
+uvicorn
+redis
+httpx
+pydantic
+loguru
+gunicorn
+aiofiles
+fastapi
+redis
+pydantic

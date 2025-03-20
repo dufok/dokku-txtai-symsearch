@@ -10,7 +10,7 @@ app = FastAPI(title="TxtAI Service")
 # Load environment variables (dokku sets these)
 DATABASE_URL = os.getenv("DATABASE_URL")
 MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "/var/lib/model")
-MODEL_PATH = os.getenv("MODEL_PATH", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+MODEL_PATH = os.getenv("MODEL_PATH")
 REDIS_URL = os.getenv("REDIS_URL")
 
 if not DATABASE_URL:
@@ -30,8 +30,16 @@ config = {
     "scoring": {"method": "bm25", "terms": True}  # enable syntax search (BM25)
 }
 
-# Initialize txtai embeddings instance
-embeddings = Embeddings(config)
+# Initialize txtai embeddings instance with better error handling
+try:
+    if not MODEL_PATH:
+        raise ValueError("MODEL_PATH environment variable is not set")
+    
+    embeddings = Embeddings(config)
+    print(f"Model {MODEL_PATH} initialized successfully")
+except Exception as e:
+    print(f"Error initializing embeddings model: {str(e)}")
+    raise  # Re-raise to prevent startup with a broken model
 
 # Set up SQLAlchemy engine for direct PostgreSQL queries.
 engine = create_engine(DATABASE_URL)

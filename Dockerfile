@@ -11,20 +11,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install missing dependencies needed for transformers
-RUN pip install --no-cache-dir tiktoken protobuf
-
 # Set longer timeout for Hugging Face downloads
 ENV HF_HUB_DOWNLOAD_TIMEOUT=300
+ENV MODEL_PATH="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 # Create model cache directory
 RUN mkdir -p /var/lib/model && chmod 777 /var/lib/model
 
-# Use ARG for build-time default values
-ARG MODEL_PATH_ARG="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-
-# Pre-download the model during build (uses build arg but can be overridden at runtime)
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_PATH_ARG}', cache_folder='/var/lib/model')"
+# Pre-download the model during build using ENV instead of ARG
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_PATH}', cache_folder='/var/lib/model')"
 
 # Copy application code
 COPY src/ /app/src/

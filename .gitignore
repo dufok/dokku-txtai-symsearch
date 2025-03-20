@@ -9,3 +9,4 @@ ENV/
 .idea/
 .vscode/
 *.swp
+.DS_Store

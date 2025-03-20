@@ -15,6 +15,10 @@ REDIS_URL = os.getenv("REDIS_URL")
 
 if not DATABASE_URL:
     raise Exception("DATABASE_URL is not set")
+else:
+    # Convert postgres:// to postgresql:// for SQLAlchemy compatibility
+    if DATABASE_URL.startswith('postgres://'):
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
 # Build txtai configuration to use Postgres for content storage and pgvector for vector search.
 config = {

@@ -11,13 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set the model path and pre-download the model during build
+ENV MODEL_PATH="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+ENV MODEL_CACHE_DIR="/var/lib/model"
+RUN mkdir -p $MODEL_CACHE_DIR && chmod 777 $MODEL_CACHE_DIR
+# Pre-download the model during build
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$MODEL_PATH', cache_folder='$MODEL_CACHE_DIR')"
+
 # Copy application code
 COPY src/ /app/src/
 
-# Create model cache directory and ensure proper permissions
-RUN mkdir -p /var/lib/model && chmod 777 /var/lib/model
-
-# Expose port (Dokku will override this)
+# Expose port
 EXPOSE 8000
 
 # Start the application

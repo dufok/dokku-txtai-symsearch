@@ -8,6 +8,5 @@ pydantic
 loguru
 gunicorn
 aiofiles
-fastapi
-redis
-pydantic
+sqlalchemy
+psycopg2-binary

@@ -1,28 +1,27 @@
-# TxtAI Service for Discourse.io
+# TxtAI Hybrid Search Service for Discourse.io
 
 ## Overview
 
-TxtAI Service is a dedicated microservice that powers the text embeddings and semantic search functionality for Discourse.io. It leverages the [txtai](https://github.com/neuml/txtai) library to provide efficient vector-based search across articles and authors.
-
-This service offloads compute-intensive ML operations from the main backend, improving overall system performance and resource utilization.
+TxtAI Hybrid Search Service is a dedicated microservice that powers text embeddings and advanced search functionality for Discourse.io. Built on the [txtai](https://github.com/neuml/txtai) library, this service now leverages PostgreSQL (with the pgvector extension) to store document content and vector embeddings persistently. In addition to semantic search, it supports traditional keyword (syntax) search and can combine both using a weighted hybrid approach. This design minimizes on-demand computation and significantly reduces system load, ensuring efficient and secure user experiences.
 
 ## Features
 
-- **Multilingual Text Embeddings**: Uses `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` for high-quality embeddings
-- **Document Indexing**: Efficient indexing of single documents or batches
-- **Semantic Search**: Find relevant content based on meaning, not just keywords
-- **Persistent Model Cache**: Model files are stored in persistent storage to avoid redownloading
-- **Redis Integration**: Optional result caching using Redis
-- **Health Monitoring**: Service status endpoints for monitoring
+- **Multilingual Text Embeddings**: Uses `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` for high-quality embeddings.
+- **Document Indexing**: Incremental indexing (via upsert) allows adding or updating documents without reprocessing the entire database.
+- **Hybrid Search**: Combines semantic (vector-based) search with full-text (syntax/BM25) search using weighted scoring.
+- **Persistent Storage with PostgreSQL**: Uses PostgreSQL (via DATABASE_URL) with pgvector to securely store document content and embeddings.
+- **Redis Integration (Optional)**: Supports result caching using Redis.
+- **Persistent Model Cache**: Model files are stored in a persistent directory to avoid redownloading.
+- **Health Monitoring**: Provides endpoints for service status and model information.
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/info` | GET | Get service status and model information |
-| `/index` | POST | Index a single document |
-| `/bulk-index` | POST | Index multiple documents at once |
-| `/search` | POST | Search for relevant documents |
+| Endpoint      | Method | Description                                      |
+|---------------|--------|--------------------------------------------------|
+| `/info`       | GET    | Get service status and current configuration.    |
+| `/index`      | POST   | Index (or update) a single document incrementally.|
+| `/bulk-index` | POST   | Index multiple documents in a single request.     |
+| `/search`     | POST   | Perform a weighted hybrid search combining full-text and semantic search. |
 
 ### Example Requests
 
@@ -33,28 +32,47 @@ curl -X GET http://localhost:8000/info
 # Index a document
 curl -X POST http://localhost:8000/index \
   -H "Content-Type: application/json" \
-  -d '{"id":"123", "text":"Sample article text to index"}'
+  -d '{"id": "123", "text": "Sample article text to index"}'
 
 # Search for content
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
-  -d '{"text":"search query", "limit":10, "offset":0}'
+  -d '{"text": "search query", "limit": 10}'
 ```
 
-## Dokku setup
+#### Dokku setup
+
+# Specific points:
+
+  - We are need Postgres version with pgvector
+
+```bash
+  dokku apps:create txtai
+  dokku postgres:create txtai-db --image "pgvector/pgvector" --image-version "pg16"
 ```
-# Create the app
-dokku apps:create txtai
+  - Connect to DB and activate vector
 
-# Configure environment variables
-dokku config:set txtai REDIS_URL="redis://:password@dokku-redis-discoursio-redis:6379"
-dokku config:set txtai MODEL_CACHE_DIR="/var/lib/model"  
-dokku config:set txtai MODEL_PATH="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+```bash
+  dokku postgres:connect txtai-db
 
-# Create persistent storage for model cache
-dokku storage:ensure-directory txtai
-dokku storage:mount txtai /var/lib/dokku/data/storage/txtai:/var/lib/model
+  txtxai_db=# CREATE EXTENSION vector;
+```
 
-# Set domain (optional)
-dokku domains:set txtai txtai.yourdomain.com
+  - Link with app
+
+```bash
+  dokku postgres:link txtai-db txtai
+```
+
+  - Config app
+
+```bash
+  dokku config:set txtai MODEL_CACHE_DIR="/var/lib/model"
+  dokku config:set txtai MODEL_PATH="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+  dokku storage:ensure-directory txtai
+  dokku storage:mount txtai /var/lib/dokku/data/storage/txtai:/var/lib/model
+  dokku network:create core-searchtxtai-bridge
+  dokku network:set BACKEND attach-post-create core-searchtxtai-bridge
+  dokku network:set txtai attach-post-create core-searchtxtai-bridge
+  dokku config:set BACKEND TXTAI_SERVICE_URL=http://txtai.web.1:8000
 ```

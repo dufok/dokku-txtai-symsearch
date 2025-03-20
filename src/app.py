@@ -1,70 +1,142 @@
-from typing import Dict, List, Optional
-import uvicorn
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
-from service import txtai_service
-from config import Config
+from txtai.embeddings import Embeddings
+from sqlalchemy import create_engine, text
+import numpy as np
 
 app = FastAPI(title="TxtAI Service")
 
+# Load environment variables (dokku sets these)
+DATABASE_URL = os.getenv("DATABASE_URL")
+MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "/var/lib/model")
+MODEL_PATH = os.getenv("MODEL_PATH", "sentence-transformers/paraphrase-multilingual-mpnet-base-v2")
+REDIS_URL = os.getenv("REDIS_URL")
 
+if not DATABASE_URL:
+    raise Exception("DATABASE_URL is not set")
+
+# Build txtai configuration to use Postgres for content storage and pgvector for vector search.
+config = {
+    "path": MODEL_PATH,
+    "cache": MODEL_CACHE_DIR,          # persistent model cache
+    "content": DATABASE_URL,           # store document content in PostgreSQL
+    "backend": "pgvector",             # use pgvector as ANN backend
+    "pgvector": {"url": DATABASE_URL}, # pgvector connection settings
+    "scoring": {"method": "bm25", "terms": True}  # enable syntax search (BM25)
+}
+
+# Initialize txtai embeddings instance
+embeddings = Embeddings(config)
+
+# Set up SQLAlchemy engine for direct PostgreSQL queries.
+engine = create_engine(DATABASE_URL)
+
+# Define Pydantic models for API request bodies.
 class Document(BaseModel):
     id: str
     text: str
 
-
-class BulkIndexRequest(BaseModel):
-    documents: List[Document]
-
-
 class SearchRequest(BaseModel):
     text: str
     limit: int = 10
-    offset: int = 0
-
 
 @app.get("/info")
-async def info():
-    """Get information about the search service"""
-    return txtai_service.get_info()
-
+def info():
+    """
+    Returns the current configuration and service status.
+    """
+    return {"config": config, "status": "Txtai service running"}
 
 @app.post("/index")
-async def index(document: Document):
-    """Index a single document"""
-    if not txtai_service.available:
-        raise HTTPException(status_code=503, detail="Search service is not available")
-    
-    result = txtai_service.index_document(document.id, document.text)
-    if result:
-        return {"status": "success"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to index document")
-
+def index_document(doc: Document):
+    """
+    Incrementally index a single document using upsert.
+    """
+    try:
+        # Use upsert so that only new data is indexed (or updated if already present)
+        embeddings.upsert([(doc.id, doc.text, None)])
+        return {"message": f"Document {doc.id} indexed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/bulk-index")
-async def bulk_index(request: BulkIndexRequest):
-    """Index multiple documents at once"""
-    if not txtai_service.available:
-        raise HTTPException(status_code=503, detail="Search service is not available")
-    
-    result = txtai_service.bulk_index([doc.dict() for doc in request.documents])
-    if result.get("status") == "success":
-        return result
-    else:
-        raise HTTPException(status_code=500, detail=result.get("message", "Failed to index documents"))
+def bulk_index(docs: list[Document]):
+    """
+    Incrementally index multiple documents.
+    """
+    try:
+        data = [(doc.id, doc.text, None) for doc in docs]
+        embeddings.upsert(data)
+        return {"message": f"{len(docs)} documents indexed"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
+def get_query_embedding(query: str) -> list[float]:
+    """
+    Generate the query embedding using txtai.
+    """
+    vector = embeddings.transform(query)
+    return vector.tolist() if hasattr(vector, "tolist") else list(vector)
 
 @app.post("/search")
-async def search(request: SearchRequest):
-    """Search for documents"""
-    if not txtai_service.available:
-        raise HTTPException(status_code=503, detail="Search service is not available")
-    
-    results = txtai_service.search(request.text, request.limit, request.offset)
-    return {"results": results}
+def search(req: SearchRequest):
+    """
+    Performs a hybrid search combining:
+      - Full-text search (syntax via BM25) on the tsvector column.
+      - Semantic search (via pgvector) on stored embeddings.
+      
+    The results from each method are combined with weighted scores.
+    """
+    query = req.text
+    limit = req.limit
 
+    # Compute the query embedding for semantic search.
+    query_embedding = get_query_embedding(query)
 
-if __name__ == "__main__":
-    uvicorn.run("app:app", host=Config.HOST, port=Config.PORT, reload=False)
+    # Define weights for hybrid search (adjustable based on query context)
+    lex_weight = 0.5  # weight for full-text (syntax) search
+    sem_weight = 0.5  # weight for semantic (vector) search
+
+    # Hybrid search SQL:
+    # 1. The "full_text" CTE finds documents matching the query using full-text search.
+    # 2. The "semantic" CTE retrieves documents by computing cosine similarity via pgvector.
+    # 3. We combine the scores using a weighted sum.
+    hybrid_sql = text("""
+        WITH 
+            full_text AS (
+                SELECT id, 
+                       ts_rank_cd(content_tsv, websearch_to_tsquery('english', :query)) AS lex_score
+                FROM documents
+                WHERE content_tsv @@ websearch_to_tsquery('english', :query)
+                ORDER BY lex_score DESC
+                LIMIT 50
+            ),
+            semantic AS (
+                SELECT id,
+                       (1 - (embedding <#> :query_embedding)) AS sem_score
+                FROM documents
+                ORDER BY embedding <#> :query_embedding ASC
+                LIMIT 50
+            )
+        SELECT d.id, d.content,
+               (COALESCE(ft.lex_score, 0) * :lex_weight +
+                COALESCE(sm.sem_score, 0) * :sem_weight) AS combined_score
+        FROM full_text ft
+        FULL OUTER JOIN semantic sm ON ft.id = sm.id
+        JOIN documents d ON d.id = COALESCE(ft.id, sm.id)
+        ORDER BY combined_score DESC
+        LIMIT :limit;
+    """)
+
+    with engine.connect() as conn:
+        results = conn.execute(hybrid_sql, {
+            "query": query,
+            "query_embedding": query_embedding,
+            "lex_weight": lex_weight,
+            "sem_weight": sem_weight,
+            "limit": limit
+        })
+        rows = [dict(row) for row in results]
+
+    return {"results": rows}

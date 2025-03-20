@@ -152,3 +152,7 @@ def search(req: SearchRequest):
         rows = [dict(row) for row in results]
 
     return {"results": rows}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

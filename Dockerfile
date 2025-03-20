@@ -11,12 +11,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Set the model path and pre-download the model during build
-ENV MODEL_PATH="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-ENV MODEL_CACHE_DIR="/var/lib/model"
-RUN mkdir -p $MODEL_CACHE_DIR && chmod 777 $MODEL_CACHE_DIR
-# Pre-download the model during build
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('$MODEL_PATH', cache_folder='$MODEL_CACHE_DIR')"
+# Install missing dependencies needed for transformers
+RUN pip install --no-cache-dir tiktoken protobuf
+
+# Set longer timeout for Hugging Face downloads
+ENV HF_HUB_DOWNLOAD_TIMEOUT=300
+
+# Create model cache directory
+RUN mkdir -p /var/lib/model && chmod 777 /var/lib/model
+
+# Use ARG for build-time default values
+ARG MODEL_PATH_ARG="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+
+# Pre-download the model during build (uses build arg but can be overridden at runtime)
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${MODEL_PATH_ARG}', cache_folder='/var/lib/model')"
 
 # Copy application code
 COPY src/ /app/src/

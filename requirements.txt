@@ -1,4 +1,4 @@
-txtai
+txtai[ann]
 sentence-transformers
 fastapi
 uvicorn

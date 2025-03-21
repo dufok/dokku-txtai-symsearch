@@ -324,8 +324,15 @@ def health_check():
         with engine.connect() as conn:
             db_ok = conn.execute(text("SELECT 1")).fetchone() is not None
         
-        # Check model
-        model_ok = embeddings is not None and embeddings.initialized
+        # Check model by testing a simple embedding operation
+        model_ok = False
+        try:
+            # Try to embed a simple test string
+            test_vector = embeddings.transform("test")
+            model_ok = test_vector is not None and len(test_vector) > 0
+        except Exception as model_error:
+            print(f"Model health check failed: {str(model_error)}")
+            model_ok = False
         
         # Check if tables exist
         tables_exist = False

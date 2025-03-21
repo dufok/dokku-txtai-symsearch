@@ -34,11 +34,15 @@ else:
 # Build txtai configuration to use Postgres for content storage and pgvector for vector search.
 config = {
     "path": MODEL_PATH,
-    "cache": MODEL_CACHE_DIR,          # persistent model cache
-    "content": DATABASE_URL,           # store document content in PostgreSQL
-    "backend": "pgvector",             # use pgvector as ANN backend
-    "pgvector": {"url": DATABASE_URL}, # pgvector connection settings
-    "scoring": {"method": "bm25", "terms": True}  # enable syntax search (BM25)
+    "cache": MODEL_CACHE_DIR, 
+    "content": DATABASE_URL,
+    "backend": "pgvector",
+    "pgvector": {
+        "url": DATABASE_URL,
+        "table": "embeddings",     # Tell txtai to use this table for vectors
+        "content": "sections"      # Tell txtai to use this table for content
+    },
+    "scoring": {"method": "bm25", "terms": True}
 }
 
 # Initialize txtai embeddings instance with better error handling

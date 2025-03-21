@@ -238,6 +238,83 @@ def initialize_db():
         import traceback
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.get("/dbtest")
+def db_test():
+    """Test database connection and print URL."""
+    try:
+        print(f"Testing database connection with URL: {DATABASE_URL}")
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1")).fetchone()
+            print(f"Connection successful: {result}")
+            # Try creating a test table directly
+            conn.execute(text("CREATE TABLE IF NOT EXISTS test_table (id SERIAL PRIMARY KEY, name TEXT)"))
+            conn.commit()
+            print("Test table created")
+            return {"status": "success", "url": DATABASE_URL.replace(DATABASE_URL.split('@')[0], "***")}
+    except Exception as e:
+        print(f"Database connection error: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+
+@app.get("/check-pgvector")
+def check_pgvector():
+    """Check if pgvector extension is available."""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(
+                "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'"
+            )).fetchone()
+            
+            if result:
+                return {"status": "success", "pgvector": True, "version": result[1]}
+            else:
+                # Try to create the extension
+                try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                    conn.commit()
+                    return {"status": "success", "pgvector": "installed", "message": "Extension created"}
+                except Exception as ext_error:
+                    return {"status": "error", "pgvector": False, "message": str(ext_error)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/setup-manual")
+def setup_manual():
+    """Manually create txtai schema."""
+    try:
+        with engine.connect() as conn:
+            # Create sections table that txtai uses
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS sections (
+                    indexid SERIAL PRIMARY KEY,
+                    id TEXT NOT NULL,
+                    text TEXT,
+                    tags TEXT,
+                    entry TIMESTAMP WITH TIME ZONE
+                )
+            """))
+            
+            # Try to create vector table if pgvector is available
+            try:
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS embeddings (
+                        id TEXT PRIMARY KEY,
+                        embedding VECTOR(384)
+                    )
+                """))
+            except Exception as vector_error:
+                print(f"Vector table creation error: {str(vector_error)}")
+                # Continue anyway
+            
+            conn.commit()
+            return {"status": "success", "message": "Tables created manually"}
+    except Exception as e:
+        print(f"Manual setup error: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

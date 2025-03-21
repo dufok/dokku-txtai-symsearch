@@ -1,11 +1,15 @@
 import os
 from fastapi import FastAPI, HTTPException
+import logging
 from pydantic import BaseModel
 from txtai.embeddings import Embeddings
 from sqlalchemy import create_engine, text
 import numpy as np
 
 app = FastAPI(title="TxtAI Service")
+
+logger = logging.getLogger("txtai")
+logger.setLevel(logging.INFO) 
 
 # Load environment variables (dokku sets these)
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -82,6 +86,7 @@ def bulk_index(docs: list[Document]):
         embeddings.upsert(data)
         return {"message": f"{len(docs)} documents indexed"}
     except Exception as e:
+        logger.error(f"Bulk indexing error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 def get_query_embedding(query: str) -> list[float]:

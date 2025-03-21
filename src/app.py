@@ -1,15 +1,22 @@
 import os
 from fastapi import FastAPI, HTTPException
-import logging
 from pydantic import BaseModel
 from txtai.embeddings import Embeddings
 from sqlalchemy import create_engine, text
 import numpy as np
+import logging
+import sys
 
 app = FastAPI(title="TxtAI Service")
 
+# Configure root logger to ensure errors show up
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger("txtai")
-logger.setLevel(logging.INFO) 
+logger.setLevel(logging.INFO)
 
 # Load environment variables (dokku sets these)
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -82,11 +89,27 @@ def bulk_index(docs: list[Document]):
     Incrementally index multiple documents.
     """
     try:
+        # Add print statement for direct console output
+        print(f"Processing bulk index request with {len(docs)} documents")
+        
+        # Add validation and document size reporting
+        doc_sizes = [len(doc.text) for doc in docs]
+        max_size = max(doc_sizes) if doc_sizes else 0
+        avg_size = sum(doc_sizes)/len(doc_sizes) if doc_sizes else 0
+        print(f"Document stats: max_size={max_size}, avg_size={avg_size:.1f}")
+        
         data = [(doc.id, doc.text, None) for doc in docs]
         embeddings.upsert(data)
         return {"message": f"{len(docs)} documents indexed"}
     except Exception as e:
+        # Use print for guaranteed output in logs
+        print(f"CRITICAL ERROR in bulk_index: {str(e)}")
+        import traceback
+        print(f"Traceback: {traceback.format_exc()}")
+        
+        # Still use logger but it might not show up
         logger.error(f"Bulk indexing error: {str(e)}", exc_info=True)
+        
         raise HTTPException(status_code=500, detail=str(e))
 
 def get_query_embedding(query: str) -> list[float]:

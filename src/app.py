@@ -181,27 +181,58 @@ def search(req: SearchRequest):
 
     return {"results": rows}
 
-@app.post("/initialize")
-def initialize_db():
-    """Reset and reinitialize the database schema."""
-    global embeddings  # Move to beginning of function
+@app.post("/setup")
+def setup_database():
+    """Initialize the database schema from scratch."""
+    global embeddings
     try:
-        print("Reinitializing search database schema...")
-        # Close any existing connections first
+        print("Setting up database schema...")
+        
+        # Force close any existing connections
         try:
             embeddings.close()
         except:
             pass
             
-        # Recreate the embeddings instance
-        embeddings = Embeddings(config)
+        # Recreate the embeddings instance with schema creation
+        config_with_setup = config.copy()
+        config_with_setup["create"] = True  # Force schema creation
+        
+        embeddings = Embeddings(config_with_setup)
+        
+        print("Database schema created successfully")
+        return {"message": "Database schema created successfully"}
+    except Exception as e:
+        print(f"Error setting up database: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/initialize")
+def initialize_db():
+    """Reset and reinitialize the database schema."""
+    global embeddings
+    try:
+        print("Checking database schema...")
         
         with engine.connect() as conn:
-            # Reset the sequence
-            conn.execute(text("ALTER SEQUENCE IF EXISTS sections_indexid_seq RESTART WITH 1;"))
+            # First get the actual sequence names
+            sequences = conn.execute(text("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")).fetchall()
+            tables = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).fetchall()
+            
+            print(f"Found sequences: {sequences}")
+            print(f"Found tables: {tables}")
+            
+            # Only try to reset if we find sequences
+            if sequences:
+                for seq in sequences:
+                    seq_name = seq[0]
+                    print(f"Resetting sequence {seq_name}")
+                    conn.execute(text(f"ALTER SEQUENCE {seq_name} RESTART WITH 1"))
+            
             conn.commit()
             
-        return {"message": "Database schema reinitialized successfully"}
+        return {"message": "Database initialized successfully", "sequences": [s[0] for s in sequences], "tables": [t[0] for t in tables]}
     except Exception as e:
         print(f"Error initializing database: {str(e)}")
         import traceback

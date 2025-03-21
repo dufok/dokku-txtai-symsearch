@@ -1,4 +1,4 @@
-txtai[ann]
+txtai[ann,postgres]
 sentence-transformers
 fastapi
 uvicorn

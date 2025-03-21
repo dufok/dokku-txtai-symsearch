@@ -10,3 +10,4 @@ ENV/
 .vscode/
 *.swp
 .DS_Store
+buli_index

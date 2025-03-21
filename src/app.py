@@ -181,6 +181,33 @@ def search(req: SearchRequest):
 
     return {"results": rows}
 
+@app.post("/initialize")
+def initialize_db():
+    """Reset and reinitialize the database schema."""
+    try:
+        print("Reinitializing search database schema...")
+        # Close any existing connections first
+        try:
+            embeddings.close()
+        except:
+            pass
+            
+        # Recreate the embeddings instance
+        global embeddings
+        embeddings = Embeddings(config)
+        
+        with engine.connect() as conn:
+            # Reset the sequence
+            conn.execute(text("ALTER SEQUENCE IF EXISTS sections_indexid_seq RESTART WITH 1;"))
+            conn.commit()
+            
+        return {"message": "Database schema reinitialized successfully"}
+    except Exception as e:
+        print(f"Error initializing database: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))

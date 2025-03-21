@@ -11,3 +11,4 @@ ENV/
 *.swp
 .DS_Store
 buli_index
+log file

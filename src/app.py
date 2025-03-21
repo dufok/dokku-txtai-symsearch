@@ -353,38 +353,35 @@ def health_check():
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
     
-@app.post("/fix-sequences")
-def fix_sequences():
-    """Fix PostgreSQL sequences to avoid ID conflicts."""
+@app.post("/clean-reset")
+def clean_reset():
+    """Complete reset: truncate tables, reset sequences, and clear txtai state."""
+    global embeddings
     try:
         with engine.connect() as conn:
-            # Check for the highest indexid value in sections
-            max_id_result = conn.execute(text(
-                "SELECT COALESCE(MAX(indexid), 0) FROM sections"
-            )).scalar()
+            # 1. Truncate all tables to remove data
+            conn.execute(text("TRUNCATE sections, embeddings RESTART IDENTITY CASCADE"))
             
-            max_id = max_id_result or 0
+            # 2. Reset the sequence explicitly
+            conn.execute(text("ALTER SEQUENCE sections_indexid_seq RESTART WITH 1"))
             
-            # Reset the sequence to start after the highest value
-            conn.execute(text(
-                f"ALTER SEQUENCE sections_indexid_seq RESTART WITH {max_id + 1}"
-            ))
-            
-            # Drop the internal ID tracking table if it exists (forces txtai to rebuild state)
+            # 3. Close and recreate the embeddings instance to clear state
             try:
-                conn.execute(text("DROP TABLE IF EXISTS vectors"))
+                embeddings.close()
             except:
                 pass
                 
             conn.commit()
             
-            return {
-                "status": "success", 
-                "message": f"Sequence reset to {max_id + 1}",
-                "tables_cleaned": ["vectors"]
-            }
+        # Recreate the txtai embeddings with clean state
+        embeddings = Embeddings(config)
+            
+        return {
+            "status": "success", 
+            "message": "Database completely reset - tables truncated and sequences reset"
+        }
     except Exception as e:
-        print(f"Failed to fix sequences: {str(e)}")
+        print(f"Clean reset error: {str(e)}")
         import traceback
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}

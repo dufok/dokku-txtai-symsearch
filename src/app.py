@@ -315,6 +315,32 @@ def setup_manual():
         import traceback
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
+    
+    @app.get("/health")
+    def health_check():
+        """Check if the service is healthy with working database and model."""
+        try:
+            # Check database
+            with engine.connect() as conn:
+                db_ok = conn.execute(text("SELECT 1")).fetchone() is not None
+            
+            # Check model
+            model_ok = embeddings is not None and embeddings.initialized
+            
+            # Check if tables exist
+            tables_exist = False
+            with engine.connect() as conn:
+                tables = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).fetchall()
+                tables_exist = len(tables) > 0
+                
+            return {
+                "status": "healthy" if (db_ok and model_ok and tables_exist) else "unhealthy",
+                "database": "connected" if db_ok else "disconnected",
+                "model": "loaded" if model_ok else "not_loaded",
+                "tables": "exist" if tables_exist else "missing"
+            }
+        except Exception as e:
+            return {"status": "unhealthy", "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

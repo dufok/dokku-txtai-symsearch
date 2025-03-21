@@ -184,6 +184,7 @@ def search(req: SearchRequest):
 @app.post("/initialize")
 def initialize_db():
     """Reset and reinitialize the database schema."""
+    global embeddings  # Move to beginning of function
     try:
         print("Reinitializing search database schema...")
         # Close any existing connections first
@@ -193,7 +194,6 @@ def initialize_db():
             pass
             
         # Recreate the embeddings instance
-        global embeddings
         embeddings = Embeddings(config)
         
         with engine.connect() as conn:

@@ -353,6 +353,31 @@ def health_check():
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
     
+@app.post("/reset-connection")
+def reset_connection():
+    """Complete reset of database connections and embeddings object."""
+    global embeddings, engine
+    
+    try:
+        # First, dispose of all connections in the pool
+        engine.dispose()
+        
+        # Recreate the engine
+        engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+        
+        # Recreate embeddings object with fresh connections
+        embeddings = Embeddings(config)
+        
+        return {
+            "status": "success",
+            "message": "Database connections reset and embeddings object recreated"
+        }
+    except Exception as e:
+        print(f"Connection reset error: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+    
 @app.post("/clean-reset")
 def clean_reset():
     """Complete reset: truncate tables, reset sequences, and clear txtai state."""

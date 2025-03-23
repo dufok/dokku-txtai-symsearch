@@ -16,12 +16,15 @@ TxtAI Hybrid Search Service is a dedicated microservice that powers text embeddi
 
 ## API Endpoints
 
-| Endpoint      | Method | Description                                      |
-|---------------|--------|--------------------------------------------------|
-| `/info`       | GET    | Get service status and current configuration.    |
-| `/index`      | POST   | Index (or update) a single document incrementally.|
-| `/bulk-index` | POST   | Index multiple documents in a single request.     |
-| `/search`     | POST   | Perform a weighted hybrid search combining full-text and semantic search. |
+| Endpoint           | Method | Description                                                       |
+|--------------------|--------|-------------------------------------------------------------------|
+| `/info`            | GET    | Get service status and current configuration.                     |
+| `/health`          | GET    | Comprehensive health check of database, model, and required tables.|
+| `/dbtest`          | GET    | Test database connection and configuration (diagnostic endpoint). |
+| `/index`           | POST   | Index (or update) a single document incrementally.                |
+| `/bulk-index`      | POST   | Index multiple documents in a single request.                     |
+| `/search`          | POST   | Perform a weighted hybrid search combining full-text and semantic search. |
+| `/reset-connection`| POST   | Reset all database connections and reinitialize the embeddings object. |
 
 ### Example Requests
 
@@ -29,16 +32,29 @@ TxtAI Hybrid Search Service is a dedicated microservice that powers text embeddi
 # Check service status
 curl -X GET http://localhost:8000/info
 
+# Check system health
+curl -X GET http://localhost:8000/health
+
 # Index a document
 curl -X POST http://localhost:8000/index \
   -H "Content-Type: application/json" \
   -d '{"id": "123", "text": "Sample article text to index"}'
 
+# Bulk index multiple documents
+curl -X POST http://localhost:8000/bulk-index \
+  -H "Content-Type: application/json" \
+  -d '[{"id": "123", "text": "First document"}, {"id": "124", "text": "Second document"}]'
+
 # Search for content
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
   -d '{"text": "search query", "limit": 10}'
+
+# Reset database connections (maintenance/troubleshooting)
+curl -X POST http://localhost:8000/reset-connection
 ```
+
+> Note: The service automatically checks for and initializes the pgvector extension and required database tables on startup, so manual database setup is no longer required.
 
 #### Dokku setup
 
@@ -72,6 +88,11 @@ curl -X POST http://localhost:8000/search \
   dokku storage:ensure-directory txtai
   dokku storage:mount txtai /var/lib/dokku/data/storage/txtai:/var/lib/model
   dokku network:create core-searchtxtai-bridge
+```
+
+  - Config one netwrok for backend and frontend
+
+```bash
   dokku network:set BACKEND attach-post-create core-searchtxtai-bridge
   dokku network:set txtai attach-post-create core-searchtxtai-bridge
   dokku config:set BACKEND TXTAI_SERVICE_URL=http://txtai.web.1:8000

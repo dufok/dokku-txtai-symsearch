@@ -31,6 +31,108 @@ else:
     if DATABASE_URL.startswith('postgres://'):
         DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
+
+# Set up SQLAlchemy engine for direct PostgreSQL queries.
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
+# Check and initialize pgvector extension on startup
+print("Checking PostgreSQL pgvector extension...")
+try:
+    with engine.connect() as conn:
+        # Check if vector extension exists
+        result = conn.execute(text(
+            "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'"
+        )).fetchone()
+        
+        if result:
+            print(f"pgvector extension found with version {result[1]}")
+        else:
+            print("pgvector extension not found, attempting to create it...")
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+                print("Successfully created pgvector extension")
+            except Exception as ext_error:
+                print(f"WARNING: Could not create pgvector extension: {str(ext_error)}")
+                print("Vector operations may not work correctly!")
+except Exception as e:
+    print(f"Error checking pgvector extension: {str(e)}")
+    print("Continuing startup, but vector operations may fail")
+
+# Check if database has required schema and initialize if needed
+print("Checking if database has required tables...")
+try:
+    with engine.connect() as conn:
+        # Check if essential tables exist
+        result = conn.execute(text("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('sections', 'embeddings', 'documents')
+        """)).fetchall()
+        
+        existing_tables = [row[0] for row in result]
+        print(f"Found tables: {existing_tables}")
+        
+        if len(existing_tables) < 3:
+            print("Database is missing essential tables. Initializing schema...")
+            
+            # Create sections table that txtai uses if it doesn't exist
+            if 'sections' not in existing_tables:
+                print("Creating sections table...")
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS sections (
+                        indexid SERIAL PRIMARY KEY,
+                        id TEXT NOT NULL,
+                        text TEXT,
+                        tags TEXT,
+                        entry TIMESTAMP WITH TIME ZONE
+                    )
+                """))
+            
+            # Create embeddings table if it doesn't exist
+            if 'embeddings' not in existing_tables:
+                print("Creating embeddings table...")
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS embeddings (
+                        id TEXT PRIMARY KEY,
+                        embedding VECTOR(384)
+                    )
+                """))
+            
+            # Create documents table with full-text search capabilities
+            if 'documents' not in existing_tables:
+                print("Creating documents table...")
+                conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS documents (
+                        id TEXT PRIMARY KEY,
+                        content TEXT NOT NULL,
+                        embedding VECTOR(384),
+                        content_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED
+                    )
+                """))
+                
+                # Create index for full-text search
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS documents_content_tsv_idx ON documents USING GIN (content_tsv)
+                """))
+                
+                # Create index for vector similarity search
+                conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS documents_embedding_idx ON documents 
+                    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)
+                """))
+            
+            conn.commit()
+            print("Database schema initialized successfully")
+        else:
+            print("All required tables already exist")
+except Exception as e:
+    print(f"Error checking/initializing database schema: {str(e)}")
+    import traceback
+    print(traceback.format_exc())
+    print("Continuing startup, but database operations may fail")
+
 # Build txtai configuration to use Postgres for content storage and pgvector for vector search.
 config = {
     "path": MODEL_PATH,
@@ -55,9 +157,6 @@ try:
 except Exception as e:
     print(f"Error initializing embeddings model: {str(e)}")
     raise  # Re-raise to prevent startup with a broken model
-
-# Set up SQLAlchemy engine for direct PostgreSQL queries.
-engine = create_engine(DATABASE_URL)
 
 # Define Pydantic models for API request bodies.
 class Document(BaseModel):
@@ -184,64 +283,6 @@ def search(req: SearchRequest):
         rows = [dict(row) for row in results]
 
     return {"results": rows}
-
-@app.post("/setup")
-def setup_database():
-    """Initialize the database schema from scratch."""
-    global embeddings
-    try:
-        print("Setting up database schema...")
-        
-        # Force close any existing connections
-        try:
-            embeddings.close()
-        except:
-            pass
-            
-        # Recreate the embeddings instance with schema creation
-        config_with_setup = config.copy()
-        config_with_setup["create"] = True  # Force schema creation
-        
-        embeddings = Embeddings(config_with_setup)
-        
-        print("Database schema created successfully")
-        return {"message": "Database schema created successfully"}
-    except Exception as e:
-        print(f"Error setting up database: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/initialize")
-def initialize_db():
-    """Reset and reinitialize the database schema."""
-    global embeddings
-    try:
-        print("Checking database schema...")
-        
-        with engine.connect() as conn:
-            # First get the actual sequence names
-            sequences = conn.execute(text("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")).fetchall()
-            tables = conn.execute(text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")).fetchall()
-            
-            print(f"Found sequences: {sequences}")
-            print(f"Found tables: {tables}")
-            
-            # Only try to reset if we find sequences
-            if sequences:
-                for seq in sequences:
-                    seq_name = seq[0]
-                    print(f"Resetting sequence {seq_name}")
-                    conn.execute(text(f"ALTER SEQUENCE {seq_name} RESTART WITH 1"))
-            
-            conn.commit()
-            
-        return {"message": "Database initialized successfully", "sequences": [s[0] for s in sequences], "tables": [t[0] for t in tables]}
-    except Exception as e:
-        print(f"Error initializing database: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
     
 @app.get("/dbtest")
 def db_test():
@@ -262,64 +303,6 @@ def db_test():
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
 
-@app.get("/check-pgvector")
-def check_pgvector():
-    """Check if pgvector extension is available."""
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text(
-                "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'"
-            )).fetchone()
-            
-            if result:
-                return {"status": "success", "pgvector": True, "version": result[1]}
-            else:
-                # Try to create the extension
-                try:
-                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                    conn.commit()
-                    return {"status": "success", "pgvector": "installed", "message": "Extension created"}
-                except Exception as ext_error:
-                    return {"status": "error", "pgvector": False, "message": str(ext_error)}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.post("/setup-manual")
-def setup_manual():
-    """Manually create txtai schema."""
-    try:
-        with engine.connect() as conn:
-            # Create sections table that txtai uses
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS sections (
-                    indexid SERIAL PRIMARY KEY,
-                    id TEXT NOT NULL,
-                    text TEXT,
-                    tags TEXT,
-                    entry TIMESTAMP WITH TIME ZONE
-                )
-            """))
-            
-            # Try to create vector table if pgvector is available
-            try:
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS embeddings (
-                        id TEXT PRIMARY KEY,
-                        embedding VECTOR(384)
-                    )
-                """))
-            except Exception as vector_error:
-                print(f"Vector table creation error: {str(vector_error)}")
-                # Continue anyway
-            
-            conn.commit()
-            return {"status": "success", "message": "Tables created manually"}
-    except Exception as e:
-        print(f"Manual setup error: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        return {"status": "error", "message": str(e)}
-    
 @app.get("/health")
 def health_check():
     """Check if the service is healthy with working database and model."""
@@ -378,38 +361,6 @@ def reset_connection():
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
     
-@app.post("/clean-reset")
-def clean_reset():
-    """Complete reset: truncate tables, reset sequences, and clear txtai state."""
-    global embeddings
-    try:
-        with engine.connect() as conn:
-            # 1. Truncate all tables to remove data
-            conn.execute(text("TRUNCATE sections, embeddings RESTART IDENTITY CASCADE"))
-            
-            # 2. Reset the sequence explicitly
-            conn.execute(text("ALTER SEQUENCE sections_indexid_seq RESTART WITH 1"))
-            
-            # 3. Close and recreate the embeddings instance to clear state
-            try:
-                embeddings.close()
-            except:
-                pass
-                
-            conn.commit()
-            
-        # Recreate the txtai embeddings with clean state
-        embeddings = Embeddings(config)
-            
-        return {
-            "status": "success", 
-            "message": "Database completely reset - tables truncated and sequences reset"
-        }
-    except Exception as e:
-        print(f"Clean reset error: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

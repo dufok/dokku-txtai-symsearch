@@ -200,6 +200,8 @@ def bulk_index(docs: list[Document]):
     """
     Incrementally index multiple documents.
     """
+    global embeddings
+    
     try:
         # Add print statement for direct console output
         print(f"Processing bulk index request with {len(docs)} documents")
@@ -212,26 +214,31 @@ def bulk_index(docs: list[Document]):
         
         data = [(doc.id, doc.text, None) for doc in docs]
         
-        # Create a transaction savepoint that we can roll back to if needed
+        # Try the upsert operation
         try:
             embeddings.upsert(data)
+            return {"message": f"{len(docs)} documents indexed"}
         except Exception as inner_error:
             # Handle transaction errors
             print(f"Transaction error during upsert: {str(inner_error)}")
             
-            # Try to recreate the embeddings object to reset connections
+            # First dispose of the engine to close all connections
+            print("Disposing engine connections")
+            engine.dispose()
+            
+            # Recreate embeddings object with fresh connections
             try:
-                global embeddings
-                engine.dispose()
+                print("Recreating embeddings object")
                 embeddings = Embeddings(config)
-                print("Recreated embeddings object after transaction failure")
-            except Exception as reset_error:
-                print(f"Failed to recreate embeddings: {str(reset_error)}")
-            
-            # Re-raise the error to be caught by outer handler
-            raise inner_error
-            
-        return {"message": f"{len(docs)} documents indexed"}
+                print("Successfully recreated embeddings object")
+                
+                # Try the operation again with clean connections
+                print("Retrying upsert operation")
+                embeddings.upsert(data)
+                return {"message": f"{len(docs)} documents indexed (after connection reset)"}
+            except Exception as retry_error:
+                print(f"Retry failed: {str(retry_error)}")
+                raise retry_error
     except Exception as e:
         # Use print for guaranteed output in logs
         print(f"CRITICAL ERROR in bulk_index: {str(e)}")
@@ -240,6 +247,14 @@ def bulk_index(docs: list[Document]):
         
         # Still use logger but it might not show up
         logger.error(f"Bulk indexing error: {str(e)}", exc_info=True)
+        
+        # This ensures we have clean DB connections for future requests
+        try:
+            engine.dispose()
+            embeddings = Embeddings(config)
+            print("Reset connections after error")
+        except Exception as reset_error:
+            print(f"Failed to reset connections: {str(reset_error)}")
         
         raise HTTPException(status_code=500, detail=str(e))
 

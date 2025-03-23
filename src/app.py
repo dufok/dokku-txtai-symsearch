@@ -59,6 +59,8 @@ except Exception as e:
     print(f"Error checking pgvector extension: {str(e)}")
     print("Continuing startup, but vector operations may fail")
 
+# ... existing code ...
+
 # Check if database has required schema and initialize if needed
 print("Checking if database has required tables...")
 try:
@@ -90,12 +92,13 @@ try:
                     )
                 """))
             
-            # Create embeddings table if it doesn't exist
+            # Create embeddings table with indexid column that txtai expects
             if 'embeddings' not in existing_tables:
                 print("Creating embeddings table...")
                 conn.execute(text("""
                     CREATE TABLE IF NOT EXISTS embeddings (
-                        id TEXT PRIMARY KEY,
+                        indexid SERIAL PRIMARY KEY,
+                        id TEXT UNIQUE NOT NULL,
                         embedding VECTOR(384)
                     )
                 """))
@@ -132,6 +135,12 @@ except Exception as e:
     import traceback
     print(traceback.format_exc())
     print("Continuing startup, but database operations may fail")
+    # Make sure to roll back any failed transaction
+    try:
+        if 'conn' in locals():
+            conn.rollback()
+    except:
+        pass
 
 # Build txtai configuration to use Postgres for content storage and pgvector for vector search.
 config = {
@@ -202,7 +211,26 @@ def bulk_index(docs: list[Document]):
         print(f"Document stats: max_size={max_size}, avg_size={avg_size:.1f}")
         
         data = [(doc.id, doc.text, None) for doc in docs]
-        embeddings.upsert(data)
+        
+        # Create a transaction savepoint that we can roll back to if needed
+        try:
+            embeddings.upsert(data)
+        except Exception as inner_error:
+            # Handle transaction errors
+            print(f"Transaction error during upsert: {str(inner_error)}")
+            
+            # Try to recreate the embeddings object to reset connections
+            try:
+                global embeddings
+                engine.dispose()
+                embeddings = Embeddings(config)
+                print("Recreated embeddings object after transaction failure")
+            except Exception as reset_error:
+                print(f"Failed to recreate embeddings: {str(reset_error)}")
+            
+            # Re-raise the error to be caught by outer handler
+            raise inner_error
+            
         return {"message": f"{len(docs)} documents indexed"}
     except Exception as e:
         # Use print for guaranteed output in logs
@@ -214,13 +242,6 @@ def bulk_index(docs: list[Document]):
         logger.error(f"Bulk indexing error: {str(e)}", exc_info=True)
         
         raise HTTPException(status_code=500, detail=str(e))
-
-def get_query_embedding(query: str) -> list[float]:
-    """
-    Generate the query embedding using txtai.
-    """
-    vector = embeddings.transform(query)
-    return vector.tolist() if hasattr(vector, "tolist") else list(vector)
 
 @app.post("/search")
 def search(req: SearchRequest):

@@ -200,7 +200,7 @@ def bulk_index(docs: list[Document]):
     """
     Incrementally index multiple documents.
     """
-    global embeddings
+    global embeddings, engine
     
     try:
         # Add print statement for direct console output
@@ -226,9 +226,17 @@ def bulk_index(docs: list[Document]):
             print("Disposing engine connections")
             engine.dispose()
             
+            # Add a small delay to ensure connections are fully closed
+            import time
+            time.sleep(1)
+            
             # Recreate embeddings object with fresh connections
             try:
-                print("Recreating embeddings object")
+                print("Recreating engine and embeddings object")
+                # Recreate engine first
+                engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+                
+                # Then recreate embeddings with the new engine
                 embeddings = Embeddings(config)
                 print("Successfully recreated embeddings object")
                 
@@ -238,7 +246,7 @@ def bulk_index(docs: list[Document]):
                 return {"message": f"{len(docs)} documents indexed (after connection reset)"}
             except Exception as retry_error:
                 print(f"Retry failed: {str(retry_error)}")
-                raise retry_error
+                raise HTTPException(status_code=500, detail=f"Indexing failed after retry: {str(retry_error)}")
     except Exception as e:
         # Use print for guaranteed output in logs
         print(f"CRITICAL ERROR in bulk_index: {str(e)}")
@@ -251,13 +259,16 @@ def bulk_index(docs: list[Document]):
         # This ensures we have clean DB connections for future requests
         try:
             engine.dispose()
+            # Add a delay before recreation
+            import time
+            time.sleep(1)
+            engine = create_engine(DATABASE_URL, pool_pre_ping=True)
             embeddings = Embeddings(config)
             print("Reset connections after error")
         except Exception as reset_error:
             print(f"Failed to reset connections: {str(reset_error)}")
         
         raise HTTPException(status_code=500, detail=str(e))
-
 @app.post("/search")
 def search(req: SearchRequest):
     """

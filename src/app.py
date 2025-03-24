@@ -330,6 +330,11 @@ def search(req: SearchRequest):
     # Compute the query embedding for semantic search.
     query_embedding = get_query_embedding(query)
 
+    # Convert NumPy array to a list format PostgreSQL can handle
+    if isinstance(query_embedding, np.ndarray):
+        # For pgvector compatibility
+        query_embedding = query_embedding.tolist()
+
     # Define weights for hybrid search (adjustable based on query context)
     lex_weight = 0.5  # weight for full-text (syntax) search
     sem_weight = 0.5  # weight for semantic (vector) search

@@ -198,55 +198,80 @@ def index_document(doc: Document):
 @app.post("/bulk-index")
 def bulk_index(docs: list[Document]):
     """
-    Incrementally index multiple documents.
+    Incrementally index multiple documents with improved batching to prevent errors.
     """
     global embeddings, engine
     
     try:
-        # Add print statement for direct console output
         print(f"Processing bulk index request with {len(docs)} documents")
         
-        # Add validation and document size reporting
+        # Document statistics for debugging
         doc_sizes = [len(doc.text) for doc in docs]
         max_size = max(doc_sizes) if doc_sizes else 0
         avg_size = sum(doc_sizes)/len(doc_sizes) if doc_sizes else 0
         print(f"Document stats: max_size={max_size}, avg_size={avg_size:.1f}")
         
+        # Prepare all data
         data = [(doc.id, doc.text, None) for doc in docs]
         
-        # Try the upsert operation
-        try:
-            embeddings.upsert(data)
-            return {"message": f"{len(docs)} documents indexed"}
-        except Exception as inner_error:
-            # Handle transaction errors
-            print(f"Transaction error during upsert: {str(inner_error)}")
+        # Process in small batches to prevent dictionary size issues
+        batch_size = 3  # Very small batches to prevent dictionary mutation errors
+        success_count = 0
+        failed_docs = []
+        
+        # First pass - process documents in small batches
+        for i in range(0, len(data), batch_size):
+            batch = data[i:i+batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (len(data) + batch_size - 1) // batch_size
             
-            # First dispose of the engine to close all connections
-            print("Disposing engine connections")
+            try:
+                print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} documents)")
+                embeddings.upsert(batch)
+                success_count += len(batch)
+                # Small sleep between batches to prevent overloading the database
+                if i + batch_size < len(data):
+                    import time
+                    time.sleep(0.2)
+            except Exception as batch_error:
+                print(f"Batch {batch_num} failed: {str(batch_error)}")
+                # Track failed documents to retry individually
+                failed_docs.extend(batch)
+        
+        # If we had any failures, try to reset connections and retry one by one
+        if failed_docs:
+            print(f"First pass: {success_count} of {len(docs)} documents indexed successfully")
+            print(f"Retrying {len(failed_docs)} failed documents individually with fresh connections")
+            
+            # Reset connections
             engine.dispose()
-            
-            # Add a small delay to ensure connections are fully closed
             import time
             time.sleep(1)
+            engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+            embeddings = Embeddings(config)
+            print("Reset connections for individual retries")
             
-            # Recreate embeddings object with fresh connections
-            try:
-                print("Recreating engine and embeddings object")
-                # Recreate engine first
-                engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-                
-                # Then recreate embeddings with the new engine
-                embeddings = Embeddings(config)
-                print("Successfully recreated embeddings object")
-                
-                # Try the operation again with clean connections
-                print("Retrying upsert operation")
-                embeddings.upsert(data)
-                return {"message": f"{len(docs)} documents indexed (after connection reset)"}
-            except Exception as retry_error:
-                print(f"Retry failed: {str(retry_error)}")
-                raise HTTPException(status_code=500, detail=f"Indexing failed after retry: {str(retry_error)}")
+            # Retry each failed document individually with more robust error handling
+            for doc_data in failed_docs:
+                try:
+                    print(f"Retrying document {doc_data[0]}")
+                    # Index just this one document
+                    embeddings.upsert([doc_data])
+                    success_count += 1
+                    # Small delay between individual retries
+                    time.sleep(0.3)
+                except Exception as retry_error:
+                    print(f"Retry failed for document {doc_data[0]}: {str(retry_error)}")
+        
+        # Report final results
+        if success_count == len(docs):
+            return {"message": f"All {len(docs)} documents indexed successfully"}
+        else:
+            return {
+                "message": f"{success_count} of {len(docs)} documents indexed",
+                "status": "partial_success" if success_count > 0 else "failure"
+            }
+            
     except Exception as e:
         # Use print for guaranteed output in logs
         print(f"CRITICAL ERROR in bulk_index: {str(e)}")
@@ -269,6 +294,27 @@ def bulk_index(docs: list[Document]):
             print(f"Failed to reset connections: {str(reset_error)}")
         
         raise HTTPException(status_code=500, detail=str(e))
+
+# Add the missing function for query embedding generation
+def get_query_embedding(query_text):
+    """
+    Generate embedding vector for search queries.
+    """
+    try:
+        # Use the embeddings model to transform the query text into a vector
+        query_vector = embeddings.transform(query_text)
+        
+        # Convert to numpy array if needed (pgvector expects numpy arrays)
+        if not isinstance(query_vector, np.ndarray):
+            query_vector = np.array(query_vector)
+            
+        return query_vector
+    except Exception as e:
+        print(f"Error generating query embedding: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Query embedding generation failed: {str(e)}")
+
 @app.post("/search")
 def search(req: SearchRequest):
     """

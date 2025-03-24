@@ -355,9 +355,9 @@ def search(req: SearchRequest):
             ),
             semantic AS (
                 SELECT id,
-                       (1 - (embedding <#> :query_embedding)) AS sem_score
+                       (1 - (embedding <#> :query_embedding::vector(384))) AS sem_score
                 FROM documents
-                ORDER BY embedding <#> :query_embedding ASC
+                ORDER BY embedding <#> :query_embedding::vector(384) ASC
                 LIMIT 50
             )
         SELECT d.id, d.content,

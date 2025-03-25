@@ -428,7 +428,14 @@ def search(req: SearchRequest):
             "sem_weight": sem_weight,
             "limit": limit
         })
-        rows = [dict(row) for row in results]
+        rows = []
+        for row in results:
+            # Access by column name instead of trying to convert directly to dict
+            rows.append({
+                "id": row.id,
+                "content": row.content,
+                "score": float(row.combined_score)  # Convert Decimal to float for JSON serialization
+            })
 
     return {"results": rows}
     

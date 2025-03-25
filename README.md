@@ -25,6 +25,9 @@ TxtAI Hybrid Search Service is a dedicated microservice that powers text embeddi
 | `/bulk-index`      | POST   | Index multiple documents in a single request.                     |
 | `/search`          | POST   | Perform a weighted hybrid search combining full-text and semantic search. |
 | `/reset-connection`| POST   | Reset all database connections and reinitialize the embeddings object. |
+| `/verify-docs`     | POST   | Verify which documents exist in the index from a provided list of IDs. |
+| `/index-status`    | GET    | Get detailed statistics about the current index state.            |
+| `/sync-index`      | POST   | Synchronize index with a source of truth (add missing docs, remove extra docs). |
 
 ### Example Requests
 
@@ -53,6 +56,22 @@ curl -X POST http://localhost:8000/search \
 # Reset database connections (maintenance/troubleshooting)
 curl -X POST http://localhost:8000/reset-connection
 ```
+
+# Verify specific documents exist in the index
+curl -X POST http://localhost:8000/verify-docs \
+  -H "Content-Type: application/json" \
+  -d '{"doc_ids": ["123", "456", "789"]}'
+
+# Get current index statistics
+curl -X GET http://localhost:8000/index-status
+
+# Synchronize index with source of truth (with optional document fetching)
+curl -X POST http://localhost:8000/sync-index \
+  -H "Content-Type: application/json" \
+  -d '{
+    "doc_ids": ["123", "456", "789"],
+    "fetch_callback_url": "http://your-backend/api/get-document-content"
+  }'
 
 > Note: The service automatically checks for and initializes the pgvector extension and required database tables on startup, so manual database setup is no longer required.
 

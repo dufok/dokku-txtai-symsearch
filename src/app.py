@@ -6,8 +6,13 @@ from sqlalchemy import create_engine, text
 import numpy as np
 import logging
 import sys
+from typing import List, Optional
+from datetime import datetime
 
 app = FastAPI(title="TxtAI Service")
+
+class VerifyRequest(BaseModel):
+    doc_ids: List[str]
 
 # Configure root logger to ensure errors show up
 logging.basicConfig(
@@ -58,8 +63,6 @@ try:
 except Exception as e:
     print(f"Error checking pgvector extension: {str(e)}")
     print("Continuing startup, but vector operations may fail")
-
-# ... existing code ...
 
 # Check if database has required schema and initialize if needed
 print("Checking if database has required tables...")
@@ -130,6 +133,7 @@ try:
             print("Database schema initialized successfully")
         else:
             print("All required tables already exist")
+
 except Exception as e:
     print(f"Error checking/initializing database schema: {str(e)}")
     import traceback
@@ -179,9 +183,26 @@ class SearchRequest(BaseModel):
 @app.get("/info")
 def info():
     """
-    Returns the current configuration and service status.
+    Returns the current configuration and service status with index statistics.
     """
-    return {"config": config, "status": "Txtai service running"}
+    try:
+        # Get document count
+        doc_count = 0
+        with engine.connect() as conn:
+            doc_count = conn.execute(text("SELECT COUNT(*) FROM documents")).scalar()
+        
+        return {
+            "config": config, 
+            "status": "Txtai service running",
+            "index_stats": {
+                "document_count": doc_count,
+                "model": MODEL_PATH,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+    except Exception as e:
+        print(f"Error getting info: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
 @app.post("/index")
 def index_document(doc: Document):
@@ -512,6 +533,35 @@ def reset_connection():
         }
     except Exception as e:
         print(f"Connection reset error: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+    
+@app.post("/verify-docs")
+def verify_documents(req: VerifyRequest):
+    """
+    Verify which documents from the provided list exist in the index.
+    Returns lists of missing and existing document IDs.
+    """
+    try:
+        with engine.connect() as conn:
+            # Find which IDs exist in the database
+            placeholders = ", ".join([f"'{id}'" for id in req.doc_ids])
+            query = f"SELECT id FROM documents WHERE id IN ({placeholders})"
+            result = conn.execute(text(query))
+            
+            existing_ids = [row[0] for row in result]
+            missing_ids = [id for id in req.doc_ids if id not in existing_ids]
+            
+            return {
+                "total_requested": len(req.doc_ids),
+                "existing": existing_ids,
+                "missing": missing_ids,
+                "exists_count": len(existing_ids),
+                "missing_count": len(missing_ids)
+            }
+    except Exception as e:
+        print(f"Error verifying documents: {str(e)}")
         import traceback
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}

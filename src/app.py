@@ -566,6 +566,77 @@ def verify_documents(req: VerifyRequest):
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
     
+@app.get("/index-status")
+def index_status():
+    """Return detailed statistics about the current index state."""
+    try:
+        print("Index status endpoint called - checking statistics")
+        with engine.connect() as conn:
+            # Get basic counts
+            doc_count = conn.execute(text("SELECT COUNT(*) FROM documents")).scalar()
+            embed_count = conn.execute(text("SELECT COUNT(*) FROM embeddings")).scalar()
+            section_count = conn.execute(text("SELECT COUNT(*) FROM sections")).scalar()
+            
+            # Check for inconsistencies
+            missing_embed_query = text("""
+                SELECT d.id FROM documents d
+                LEFT JOIN embeddings e ON d.id = e.id
+                WHERE e.id IS NULL
+                LIMIT 10
+            """)
+            docs_without_embeddings = [row[0] for row in conn.execute(missing_embed_query)]
+            
+            # Check for null embeddings
+            null_embed_query = text("""
+                SELECT id FROM documents 
+                WHERE embedding IS NULL
+                LIMIT 10
+            """)
+            null_embeddings = [row[0] for row in conn.execute(null_embed_query)]
+            
+            # Get sample of document IDs
+            sample_ids = [row[0] for row in conn.execute(text("SELECT id FROM documents ORDER BY id LIMIT 5"))]
+            
+            # Check ID ranges
+            id_range = conn.execute(text("""
+                SELECT MIN(id::integer), MAX(id::integer) 
+                FROM documents
+                WHERE id ~ '^[0-9]+$'
+            """)).fetchone()
+            
+            min_id, max_id = id_range if id_range and id_range[0] else (None, None)
+            
+            print(f"Index status: {doc_count} documents, {embed_count} embeddings")
+            if docs_without_embeddings:
+                print(f"WARNING: Found {len(docs_without_embeddings)} documents without embeddings!")
+            if null_embeddings:
+                print(f"WARNING: Found {len(null_embeddings)} documents with NULL embeddings!")
+            
+            return {
+                "status": "healthy" if doc_count == embed_count and not null_embeddings else "inconsistent",
+                "documents_count": doc_count,
+                "embeddings_count": embed_count,
+                "sections_count": section_count,
+                "consistency": {
+                    "status": "ok" if doc_count == embed_count and not null_embeddings else "issues",
+                    "missing_embeddings_count": len(docs_without_embeddings),
+                    "null_embeddings_count": len(null_embeddings),
+                    "missing_embeddings_sample": docs_without_embeddings,
+                    "null_embeddings_sample": null_embeddings
+                },
+                "sample_ids": sample_ids,
+                "id_range": {
+                    "min": min_id,
+                    "max": max_id,
+                    "range": (max_id - min_id + 1) if min_id is not None else None
+                }
+            }
+    except Exception as e:
+        print(f"Error checking index status: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+        return {"status": "error", "message": str(e)}
+    
 
 if __name__ == "__main__":
     import uvicorn

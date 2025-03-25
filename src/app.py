@@ -191,8 +191,34 @@ def index_document(doc: Document):
     try:
         # Use upsert so that only new data is indexed (or updated if already present)
         embeddings.upsert([(doc.id, doc.text, None)])
+        
+        # Also insert into the documents table directly
+        with engine.connect() as conn:
+            # Get the embedding vector for the document
+            embedding = embeddings.transform(doc.text)
+            if isinstance(embedding, np.ndarray):
+                embedding = embedding.tolist()
+            
+            # Insert into documents table
+            stmt = text("""
+                INSERT INTO documents (id, content, embedding)
+                VALUES (:id, :content, CAST(:embedding AS vector(384)))
+                ON CONFLICT (id) DO UPDATE
+                SET content = :content, embedding = CAST(:embedding AS vector(384))
+            """)
+            
+            conn.execute(stmt, {
+                "id": doc.id,
+                "content": doc.text,
+                "embedding": embedding
+            })
+            conn.commit()
+        
         return {"message": f"Document {doc.id} indexed"}
     except Exception as e:
+        import traceback
+        print(f"Indexing error: {str(e)}")
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/bulk-index")
@@ -228,6 +254,30 @@ def bulk_index(docs: list[Document]):
             try:
                 print(f"Processing batch {batch_num}/{total_batches} ({len(batch)} documents)")
                 embeddings.upsert(batch)
+
+                # Also update the documents table
+                with engine.connect() as conn:
+                    for doc_id, doc_text, _ in batch:
+                        # Get embedding for this document
+                        embedding = embeddings.transform(doc_text)
+                        if isinstance(embedding, np.ndarray):
+                            embedding = embedding.tolist()
+                        
+                        # Insert into documents table
+                        stmt = text("""
+                            INSERT INTO documents (id, content, embedding)
+                            VALUES (:id, :content, CAST(:embedding AS vector(384)))
+                            ON CONFLICT (id) DO UPDATE
+                            SET content = :content, embedding = CAST(:embedding AS vector(384))
+                        """)
+                        
+                        conn.execute(stmt, {
+                            "id": doc_id,
+                            "content": doc_text,
+                            "embedding": embedding
+                        })
+                    conn.commit()
+
                 success_count += len(batch)
                 # Small sleep between batches to prevent overloading the database
                 if i + batch_size < len(data):

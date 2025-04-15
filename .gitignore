@@ -12,3 +12,5 @@ ENV/
 .DS_Store
 buli_index
 log file
+config_backend/
+copilot-instructions.md

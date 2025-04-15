@@ -102,6 +102,23 @@ class TxtAIService:
             "initialized": self.initialized,
             "index_size": self.index_size,
         }
+    
+    def delete_all(self) -> bool:
+        """
+        Deletes all documents and embeddings from the database.
+        WARNING: This is destructive and should only be used for testing/debugging.
+        """
+        if not self.available or not self.initialized:
+            return False
+
+        try:
+            self.embeddings.delete("*")  # txtai: "*" deletes all documents
+            self.index_size = 0
+            logger.warning("All documents and embeddings have been deleted from the database.")
+            return True
+        except Exception as e:
+            logger.error("Failed to delete all data: %s", str(e))
+            return False
 
 
 # Create service singleton

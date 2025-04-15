@@ -624,6 +624,30 @@ def index_status():
         print(traceback.format_exc())
         return {"status": "error", "message": str(e)}
     
+    @app.post("/delete-all", status_code=status.HTTP_200_OK)
+    def delete_all_data():
+        """
+        Debug/testing endpoint: Erase all indexed data from txtai and database.
+        WARNING: This is destructive. Remove before production!
+        """
+        try:
+            # Delete all data from txtai (semantic index)
+            embeddings.delete("*")
+
+            # Delete all rows from database tables
+            with engine.connect() as conn:
+                conn.execute(text("DELETE FROM documents"))
+                conn.execute(text("DELETE FROM embeddings"))
+                conn.execute(text("DELETE FROM sections"))
+                conn.commit()
+
+            return {"status": "success", "message": "All data erased from txtai and database"}
+        except Exception as e:
+            print(f"Error deleting all data: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            raise HTTPException(status_code=500, detail=f"Failed to erase all data: {str(e)}")
+        
 
 if __name__ == "__main__":
     import uvicorn

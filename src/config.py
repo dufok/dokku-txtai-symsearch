@@ -9,9 +9,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise Exception("DATABASE_URL environment variable is not set")
 
-# REDIS_URL: Redis connection string (optional, for caching)
-REDIS_URL = os.getenv("REDIS_URL")
-
 # MODEL_CACHE_DIR: Directory for persistent model caching
 MODEL_CACHE_DIR = os.getenv("MODEL_CACHE_DIR", "/var/lib/model")
 
@@ -28,13 +25,25 @@ SEM_WEIGHT = float(os.getenv("SEM_WEIGHT", "0.5"))
 # This configuration dictionary is used to initialize the txtai Embeddings instance.
 # It specifies the vector model, caching options, and tells txtai to use PostgreSQL
 # for storing document content and embeddings via the pgvector backend.
-config = {
+
+# Base configuration for all semantic search instances
+base_config = {
     "path": MODEL_PATH,
-    "cache": MODEL_CACHE_DIR,        # directory to persist model files
-    "content": DATABASE_URL,         # store document content in PostgreSQL
-    "backend": "pgvector",           # use PostgreSQL with pgvector extension for vector search
+    "cache": MODEL_CACHE_DIR,
+    "content": DATABASE_URL,
+    "backend": "pgvector",
+    "incremental": True
+}
+
+# Author config (HYBRID)
+author_config = {
+    **base_config,
     "pgvector": {
-        "url": DATABASE_URL         # PostgreSQL connection for pgvector operations
+        "url": DATABASE_URL,
+        "table": "authors",
+        "content": "authors",
+        "column": "embedding",
+        "content_column": "bio"
     },
     "scoring": {
         "method": "bm25",          # enable syntax (full-text) search via BM25
@@ -44,21 +53,42 @@ config = {
     "hybrid": {
         "lex_weight": LEX_WEIGHT,
         "sem_weight": SEM_WEIGHT
-    },
-    # Flag to indicate if incremental indexing (upsert) is enabled.
-    "incremental": True
+    }
 }
+
+# Body config (SEMANTIC ONLY)
+body_config = {
+    **base_config,
+    "pgvector": {
+        "url": DATABASE_URL,
+        "table": "bodies",
+        "content": "bodies",
+        "column": "embedding",
+        "content_column": "body"
+    }
+}
+
+
+
+
 
 # ------------------------------------------------------------------------------
 # Helper Functions
 # ------------------------------------------------------------------------------
+def get_body_config():
+    """Returns the body search configuration."""
+    return body_config
+
+def get_author_config():
+    """Returns the author search configuration."""
+    return author_config
+
+# For backward compatibility
 def get_config():
-    """
-    Returns the txtai configuration dictionary.
-    """
-    return config
+    """Returns the default config (body) for backward compatibility."""
+    return body_config
 
 if __name__ == "__main__":
     # For testing: print the configuration as formatted JSON.
     import json
-    print(json.dumps(config, indent=2))
+    print(json.dumps(base_config, indent=2))

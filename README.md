@@ -91,6 +91,7 @@ curl -X POST http://localhost:8000/sync-index \
   dokku postgres:connect txtai-db
 
   txtxai_db=# CREATE EXTENSION vector;
+  txtxai_db=# CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ```
 
   - Link with app

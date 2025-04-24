@@ -735,9 +735,10 @@ def search_combined(req: SearchRequest):
                                 "match_type": "all_terms_title",
                             }
                         )
-
+            
                 # Fallback: ILIKE substring match if no full-text results
                 if not all_terms_matches:
+                    print("No full-text matches found, using ILIKE fallback")
                     ilike_stmt = text(
                         """
                         SELECT id, title, 1.0 AS base_score
@@ -752,6 +753,8 @@ def search_combined(req: SearchRequest):
                         "query_lower": query_text,
                         "limit": 100,
                     }
+                    print(f"ILIKE SQL: {ilike_stmt}")
+                    print(f"ILIKE Params: {ilike_params}")
                     ilike_matches = conn.execute(ilike_stmt, ilike_params)
                     for row in ilike_matches:
                         if not any(r["id"] == row.id for r in title_results):
@@ -797,11 +800,11 @@ def search_combined(req: SearchRequest):
             # Combine and trim to limit
             combined = title_results + body_results
             combined.sort(key=lambda x: x["score"], reverse=True)
-            
+
             print(f"Search terms: {search_terms}")
             print(f"All-terms SQL: {all_terms_stmt}")
             print(f"Params: {params}")
-            
+
             return {"results": combined[: req.limit]}
 
     except Exception as e:

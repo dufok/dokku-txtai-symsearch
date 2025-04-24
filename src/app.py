@@ -706,7 +706,6 @@ def search_combined(req: SearchRequest):
                         "match_type": "exact_title",
                     }
                 )
-
             # Step 2: All-terms title matches
             if search_terms:
                 # Use plainto_tsquery for more robust matching
@@ -725,7 +724,7 @@ def search_combined(req: SearchRequest):
                     "query_lower": query_text,
                     "limit": 100,
                 }
-                all_terms_matches = conn.execute(all_terms_stmt, params)
+                all_terms_matches = conn.execute(all_terms_stmt, params).fetchall()
                 for row in all_terms_matches:
                     if not any(r["id"] == row.id for r in title_results):
                         title_results.append(
@@ -736,6 +735,34 @@ def search_combined(req: SearchRequest):
                                 "match_type": "all_terms_title",
                             }
                         )
+
+                # Fallback: ILIKE substring match if no full-text results
+                if not all_terms_matches:
+                    ilike_stmt = text(
+                        """
+                        SELECT id, title, 1.0 AS base_score
+                        FROM titles
+                        WHERE title ILIKE :like_query
+                        AND LOWER(title) != :query_lower
+                        LIMIT :limit
+                        """
+                    )
+                    ilike_params = {
+                        "like_query": f"%{req.text}%",
+                        "query_lower": query_text,
+                        "limit": 100,
+                    }
+                    ilike_matches = conn.execute(ilike_stmt, ilike_params)
+                    for row in ilike_matches:
+                        if not any(r["id"] == row.id for r in title_results):
+                            title_results.append(
+                                {
+                                    "id": row.id,
+                                    "title": row.title,
+                                    "score": 1.0,
+                                    "match_type": "substring_title",
+                                }
+                            )
 
             # If we have enough title results, return them
             if len(title_results) >= req.limit:

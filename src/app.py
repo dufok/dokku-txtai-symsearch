@@ -439,8 +439,10 @@ def index_body(doc: BodyDocument):
     Index a single body content using semantic search.
     """
     try:
-        # Generate embedding for body content
-        embedding = body_embeddings.transform(doc.body)
+        # Clean the body text before indexing
+        clean_body = clean_text(doc.body)
+        # Generate embedding for cleaned body content
+        embedding = body_embeddings.transform(clean_body)
         if isinstance(embedding, np.ndarray):
             embedding = embedding.tolist()
 
@@ -452,10 +454,12 @@ def index_body(doc: BodyDocument):
                 VALUES (:id, :body, CAST(:embedding AS vector(384)))
                 ON CONFLICT (id) DO UPDATE
                 SET body = :body, embedding = CAST(:embedding AS vector(384))
-            """
+                """
             )
 
-            conn.execute(stmt, {"id": doc.id, "body": doc.body, "embedding": embedding})
+            conn.execute(
+                stmt, {"id": doc.id, "body": clean_body, "embedding": embedding}
+            )
             conn.commit()
 
         return {"message": f"Body content {doc.id} indexed"}
@@ -540,7 +544,6 @@ def bulk_index_bodies(docs: list[BodyDocument]):
     try:
         print(f"Processing bulk index of {len(docs)} bodies")
 
-        # Process in batches
         batch_size = 10
         success_count = 0
 
@@ -549,23 +552,24 @@ def bulk_index_bodies(docs: list[BodyDocument]):
 
             with engine.connect() as conn:
                 for doc in batch:
-                    # Generate embedding
-                    embedding = body_embeddings.transform(doc.body)
+                    # Clean the body text before indexing
+                    clean_body = clean_text(doc.body)
+                    # Generate embedding for cleaned body content
+                    embedding = body_embeddings.transform(clean_body)
                     if isinstance(embedding, np.ndarray):
                         embedding = embedding.tolist()
 
-                    # Insert into bodies table
                     stmt = text(
                         """
                         INSERT INTO bodies (id, body, embedding)
                         VALUES (:id, :body, CAST(:embedding AS vector(384)))
                         ON CONFLICT (id) DO UPDATE
                         SET body = :body, embedding = CAST(:embedding AS vector(384))
-                    """
+                        """
                     )
 
                     conn.execute(
-                        stmt, {"id": doc.id, "body": doc.body, "embedding": embedding}
+                        stmt, {"id": doc.id, "body": clean_body, "embedding": embedding}
                     )
                 conn.commit()
 
@@ -760,7 +764,7 @@ def search_combined(req: SearchRequest):
                     body_results.append(
                         {
                             "id": row.id,
-                            "body": clean_text(row.body),
+                            "body": row.body,
                             "score": float(row.score) * 0.9,
                             "match_type": "body",
                         }

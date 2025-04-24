@@ -709,26 +709,24 @@ def search_combined(req: SearchRequest):
 
             # Step 2: All-terms title matches
             if search_terms:
-                # Build a tsquery string: join terms with '&' for AND logic
-                ts_query = " & ".join(search_terms)
+                # Use plainto_tsquery for more robust matching
                 all_terms_stmt = text(
                     """
-                    SELECT id, title, ts_rank_cd(to_tsvector('russian', title), to_tsquery('russian', :ts_query)) AS base_score
+                    SELECT id, title, ts_rank_cd(to_tsvector('russian', title), plainto_tsquery('russian', :query)) AS base_score
                     FROM titles
-                    WHERE to_tsvector('russian', title) @@ to_tsquery('russian', :ts_query)
+                    WHERE to_tsvector('russian', title) @@ plainto_tsquery('russian', :query)
                     AND LOWER(title) != :query_lower
                     ORDER BY base_score DESC
                     LIMIT :limit
                     """
                 )
                 params = {
-                    "ts_query": ts_query,
+                    "query": req.text,
                     "query_lower": query_text,
                     "limit": 100,
                 }
                 all_terms_matches = conn.execute(all_terms_stmt, params)
                 for row in all_terms_matches:
-                    # Avoid duplicates
                     if not any(r["id"] == row.id for r in title_results):
                         title_results.append(
                             {
@@ -772,14 +770,12 @@ def search_combined(req: SearchRequest):
             # Combine and trim to limit
             combined = title_results + body_results
             combined.sort(key=lambda x: x["score"], reverse=True)
+            
+            print(f"Search terms: {search_terms}")
+            print(f"All-terms SQL: {all_terms_stmt}")
+            print(f"Params: {params}")
+            
             return {"results": combined[: req.limit]}
-
-        print(
-            f"Combined search results: {len(combined)} total, returning {len(combined[: req.limit])}"
-        )
-        print(f"Search terms: {search_terms}")
-        print(f"All-terms SQL: {all_terms_stmt}")
-        print(f"Params: {params}")
 
     except Exception as e:
         print(f"Error in combined search: {str(e)}")

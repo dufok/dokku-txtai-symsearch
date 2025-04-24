@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, text
 import numpy as np
 import logging
 import sys
+import re
 from typing import List, Optional
 from datetime import datetime
 
@@ -14,6 +15,22 @@ app = FastAPI(title="TxtAI Service")
 
 class VerifyRequest(BaseModel):
     doc_ids: List[str]
+
+
+# Define a function to clean text by removing HTML tags and URLs
+# This function is used to clean the text before indexing or searching
+def clean_text(text: str) -> str:
+    """
+    Removes HTML tags and URLs from the given text.
+    """
+    # Remove HTML tags
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Remove URLs (http, https, www)
+    text = re.sub(r"http[s]?://\S+", " ", text)
+    text = re.sub(r"www\.\S+", " ", text)
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 # Configure root logger to ensure errors show up
@@ -743,7 +760,7 @@ def search_combined(req: SearchRequest):
                     body_results.append(
                         {
                             "id": row.id,
-                            "body": row.body,
+                            "body": clean_text(row.body),
                             "score": float(row.score) * 0.9,
                             "match_type": "body",
                         }
@@ -753,6 +770,13 @@ def search_combined(req: SearchRequest):
             combined = title_results + body_results
             combined.sort(key=lambda x: x["score"], reverse=True)
             return {"results": combined[: req.limit]}
+
+        print(
+            f"Combined search results: {len(combined)} total, returning {len(combined[: req.limit])}"
+        )
+        print(f"Search terms: {search_terms}")
+        print(f"All-terms SQL: {all_terms_stmt}")
+        print(f"Params: {params}")
 
     except Exception as e:
         print(f"Error in combined search: {str(e)}")

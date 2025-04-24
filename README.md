@@ -16,45 +16,66 @@ TxtAI Hybrid Search Service is a dedicated microservice that powers text embeddi
 
 ## API Endpoints
 
-| Endpoint           | Method | Description                                                       |
-|--------------------|--------|-------------------------------------------------------------------|
-| `/info`            | GET    | Get service status and current configuration.                     |
-| `/health`          | GET    | Comprehensive health check of database, model, and required tables.|
-| `/dbtest`          | GET    | Test database connection and configuration (diagnostic endpoint). |
-| `/index`           | POST   | Index (or update) a single document incrementally.                |
-| `/bulk-index`      | POST   | Index multiple documents in a single request.                     |
-| `/search`          | POST   | Perform a weighted hybrid search combining full-text and semantic search. |
-| `/reset-connection`| POST   | Reset all database connections and reinitialize the embeddings object. |
-| `/verify-docs`     | POST   | Verify which documents exist in the index from a provided list of IDs. |
-| `/index-status`    | GET    | Get detailed statistics about the current index state.            |
-| `/sync-index`      | POST   | Synchronize index with a source of truth (add missing docs, remove extra docs). |
+| Endpoint             | Method | Description                                                       |
+|----------------------|--------|-------------------------------------------------------------------|
+| `/info`              | GET    | Get service status and current configuration.                     |
+| `/health`            | GET    | Comprehensive health check of database, model, and required tables.|
+| `/dbtest`            | GET    | Test database connection and configuration (diagnostic endpoint). |
+| `/index-status`      | GET    | Get detailed statistics about the current index state.            |
+| **Body Content**     |        |                                                                   |
+| `/index-body`        | POST   | Index (or update) a single body document using semantic search.   |
+| `/bulk-index-bodies` | POST   | Index multiple body documents in a single request.                |
+| **Title Content**    |        |                                                                   |
+| `/index-title`       | POST   | Index (or update) a single title using fuzzy search.              |
+| `/bulk-index-titles` | POST   | Index multiple titles in a single request.                        |
+| **Author Content**   |        |                                                                   |
+| `/index-author`      | POST   | Index (or update) a single author using hybrid search.            |
+| `/bulk-index-authors`| POST   | Index multiple authors in a single request.                       |
+| **Search**           |        |                                                                   |
+| `/search-combined`   | POST   | Perform prioritized search with exact titles, all-terms titles, and body semantic matches. |
+| `/search-author`     | POST   | Search authors using hybrid approach (semantic + fuzzy).          |
+| **Maintenance**      |        |                                                                   |
+| `/reset-connection`  | POST   | Reset all database connections and reinitialize the embeddings object. |
+| `/verify-docs`       | POST   | Verify which documents exist in the index from a provided list of IDs. |
+| `/delete-all`        | POST   | Delete all documents and embeddings from the database (for testing only). |
 
-### Example Requests
+> **Legacy endpoints**: For backward compatibility, these endpoints are still available but reference the new specialized endpoints:
+> - `/index` (POST): Maps to `/index-body`
+> - `/bulk-index` (POST): Maps to `/bulk-index-bodies`
+> - `/search` (POST): Maps to body search functionality
+
+### Example Requests for Specialized Endpoints
 
 ```bash
-# Check service status
-curl -X GET http://localhost:8000/info
-
-# Check system health
-curl -X GET http://localhost:8000/health
-
-# Index a document
-curl -X POST http://localhost:8000/index \
+# Index a body document
+curl -X POST http://localhost:8000/index-body \
   -H "Content-Type: application/json" \
-  -d '{"id": "123", "text": "Sample article text to index"}'
+  -d '{"id": "123", "body": "Sample article text to index"}'
 
-# Bulk index multiple documents
-curl -X POST http://localhost:8000/bulk-index \
+# Index a title
+curl -X POST http://localhost:8000/index-title \
   -H "Content-Type: application/json" \
-  -d '[{"id": "123", "text": "First document"}, {"id": "124", "text": "Second document"}]'
+  -d '{"id": "123", "title": "Sample Article Title"}'
 
-# Search for content
-curl -X POST http://localhost:8000/search \
+# Index an author
+curl -X POST http://localhost:8000/index-author \
+  -H "Content-Type: application/json" \
+  -d '{"id": "author1", "name": "Jane Doe", "bio": "Award-winning author"}'
+
+# Combined search (with prioritized results)
+curl -X POST http://localhost:8000/search-combined \
   -H "Content-Type: application/json" \
   -d '{"text": "search query", "limit": 10}'
 
-# Reset database connections (maintenance/troubleshooting)
-curl -X POST http://localhost:8000/reset-connection
+# Search authors
+curl -X POST http://localhost:8000/search-author \
+  -H "Content-Type: application/json" \
+  -d '{"text": "author name", "limit": 10}'
+
+# Bulk index titles
+curl -X POST http://localhost:8000/bulk-index-titles \
+  -H "Content-Type: application/json" \
+  -d '[{"id": "123", "title": "First title"}, {"id": "124", "title": "Second title"}]'
 ```
 
 # Verify specific documents exist in the index

@@ -557,74 +557,131 @@ def bulk_index_authors(docs: list[AuthorDocument]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/search-body")
-def search_body(req: SearchRequest):
+@app.post("/search-combined")
+def search_combined(req: SearchRequest):
     """
-    Search body content using semantic search.
+    Combined search that prioritizes results by match quality:
+    1. Exact title matches (highest priority)
+    2. Titles containing all search terms (medium priority)
+    3. Body semantic matches (lowest priority)
+    
+    Results are scored and ranked based on match quality.
     """
     try:
-        # Generate query embedding
+        # Parse search query into keywords for title matching
+        query_text = req.text.strip().lower()
+        search_terms = [term.lower() for term in query_text.split() if len(term) > 2]
+        
+        # Generate embedding for body search
         query_embedding = body_embeddings.transform(req.text)
         if isinstance(query_embedding, np.ndarray):
             query_embedding = query_embedding.tolist()
         
-        # Execute semantic search
+        combined_results = {}
+        
         with engine.connect() as conn:
-            stmt = text("""
+            # Step 1: Execute title search for exact matches
+            exact_match_stmt = text("""
+                SELECT id, title, similarity(title, :query) AS base_score
+                FROM titles
+                WHERE LOWER(title) = :query_lower
+                ORDER BY similarity(title, :query) DESC
+                LIMIT 100
+            """)
+            
+            exact_matches = conn.execute(exact_match_stmt, {
+                "query": req.text,
+                "query_lower": query_text
+            })
+            
+            # Process exact title matches (highest priority)
+            for row in exact_matches:
+                combined_results[row.id] = {
+                    "id": row.id,
+                    "title": row.title,
+                    "score": float(row.base_score) * 2.5,  # Highest boost for exact matches
+                    "match_type": "exact_title"
+                }
+            
+            # Step 2: Find titles containing all search terms
+            if search_terms:
+                # Build a query that checks if all terms are present
+                conditions = []
+                params = {"limit": 100}
+                
+                for i, term in enumerate(search_terms):
+                    conditions.append(f"LOWER(title) LIKE '%' || :term{i} || '%'")
+                    params[f"term{i}"] = term
+                    
+                where_clause = " AND ".join(conditions)
+                
+                all_terms_stmt = text(f"""
+                    SELECT id, title, similarity(title, :query) AS base_score
+                    FROM titles
+                    WHERE {where_clause}
+                    AND LOWER(title) != :query_lower
+                    ORDER BY similarity(title, :query) DESC
+                    LIMIT :limit
+                """)
+                
+                params["query"] = req.text
+                params["query_lower"] = query_text
+                
+                all_terms_matches = conn.execute(all_terms_stmt, params)
+                
+                # Process titles with all search terms
+                for row in all_terms_matches:
+                    if row.id not in combined_results:
+                        combined_results[row.id] = {
+                            "id": row.id,
+                            "title": row.title,
+                            "score": float(row.base_score) * 1.8,  # Medium boost
+                            "match_type": "all_terms_title"
+                        }
+            
+            # Step 3: Execute body search (semantic)
+            body_stmt = text("""
                 SELECT id, body, (1 - (embedding <#> CAST(:query_embedding AS vector(384)))) AS score
                 FROM bodies
                 ORDER BY embedding <#> CAST(:query_embedding AS vector(384)) ASC
                 LIMIT :limit
             """)
             
-            results = conn.execute(stmt, {
+            body_matches = conn.execute(body_stmt, {
                 "query_embedding": query_embedding,
-                "limit": req.limit
+                "limit": req.limit * 2  # Get more results to ensure good coverage
             })
             
-            # Process results
-            rows = [{
-                "id": row.id,
-                "body": row.body,
-                "score": float(row.score)
-            } for row in results]
+            # Process body results
+            for row in body_matches:
+                shout_id = row.id
+                body_score = float(row.score) * 0.9  # Apply slight reduction to body scores
+                
+                if shout_id in combined_results:
+                    # Already found in title search, keep higher score
+                    if body_score > combined_results[shout_id]["score"]:
+                        combined_results[shout_id]["score"] = body_score
+                        combined_results[shout_id]["body"] = row.body
+                        combined_results[shout_id]["match_type"] = "body+" + combined_results[shout_id]["match_type"]
+                else:
+                    # Body-only match
+                    combined_results[shout_id] = {
+                        "id": shout_id,
+                        "body": row.body,
+                        "score": body_score,
+                        "match_type": "body"
+                    }
         
-        return {"results": rows}
-    except Exception as e:
-        print(f"Error searching bodies: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/search-title")
-def search_title(req: SearchRequest):
-    """
-    Search titles using fuzzy search with trigrams.
-    """
-    try:
-        # Execute fuzzy search with similarity threshold
-        with engine.connect() as conn:
-            stmt = text("""
-                SELECT id, title, similarity(title, :query) AS score
-                FROM titles
-                WHERE similarity(title, :query) > 0.3
-                ORDER BY similarity(title, :query) DESC
-                LIMIT :limit
-            """)
-            
-            results = conn.execute(stmt, {
-                "query": req.text,
-                "limit": req.limit
-            })
-            
-            # Process results
-            rows = [{
-                "id": row.id,
-                "title": row.title,
-                "score": float(row.score)
-            } for row in results]
+        # Convert to list, sort by score, and apply pagination
+        results = list(combined_results.values())
+        results.sort(key=lambda x: x.get("score", 0), reverse=True)
+        results = results[:req.limit]
         
-        return {"results": rows}
+        return {"results": results}
     except Exception as e:
-        print(f"Error searching titles: {str(e)}")
+        print(f"Error in combined search: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/search-author")

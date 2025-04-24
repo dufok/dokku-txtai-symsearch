@@ -17,17 +17,21 @@ class TxtAIService:
     def __init__(self):
         self.body_embeddings = None
         self.author_embeddings = None
-        self.available = os.getenv("SEARCH_ENABLED", "true").lower() in ["true", "1", "yes"]
+        self.available = os.getenv("SEARCH_ENABLED", "true").lower() in [
+            "true",
+            "1",
+            "yes",
+        ]
         self.initialized = {"body": False, "author": False}
         self.index_size = {"bodies": 0, "titles": 0, "authors": 0}
 
         # Get configurations from config.py
         self.body_config = get_body_config()
         self.author_config = get_author_config()
-        
+
         # For backward compatibility
         self.config = get_config()
-        
+
         # Create model cache directory
         model_cache_dir = self.config.get("cache", "/var/lib/model")
         os.makedirs(model_cache_dir, exist_ok=True)
@@ -46,7 +50,9 @@ class TxtAIService:
         """Initialize the txtai embeddings models using the provided configurations."""
         # Initialize body embeddings (semantic search)
         try:
-            logger.info("Loading body embeddings model %s", self.body_config.get("path"))
+            logger.info(
+                "Loading body embeddings model %s", self.body_config.get("path")
+            )
             self.body_embeddings = Embeddings(self.body_config)
             self.initialized["body"] = True
             logger.info("Body embeddings model loaded successfully")
@@ -55,15 +61,17 @@ class TxtAIService:
 
         # Initialize author embeddings (hybrid search)
         try:
-            logger.info("Loading author embeddings model %s", self.author_config.get("path"))
+            logger.info(
+                "Loading author embeddings model %s", self.author_config.get("path")
+            )
             self.author_embeddings = Embeddings(self.author_config)
             self.initialized["author"] = True
             logger.info("Author embeddings model loaded successfully")
         except Exception as e:
             logger.error("Failed to initialize author embeddings: %s", str(e))
-    
+
     # BODY CONTENT METHODS (SEMANTIC SEARCH)
-    
+
     def index_body(self, document_id: str, text: str) -> bool:
         """Index a single body document using semantic search."""
         if not self.available or not self.initialized["body"]:
@@ -82,7 +90,10 @@ class TxtAIService:
     def bulk_index_bodies(self, documents: List[Dict[str, str]]) -> Dict[str, Any]:
         """Index multiple body documents at once using semantic search."""
         if not self.available or not self.initialized["body"]:
-            return {"status": "error", "message": "Body search service is not available"}
+            return {
+                "status": "error",
+                "message": "Body search service is not available",
+            }
 
         try:
             data = [(doc["id"], doc["text"], None) for doc in documents]
@@ -94,7 +105,9 @@ class TxtAIService:
             logger.error("Error during bulk body indexing: %s", str(e))
             return {"status": "error", "message": str(e)}
 
-    def search_body(self, query: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+    def search_body(
+        self, query: str, limit: int = 10, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """Search body content using semantic search."""
         if not self.available or not self.initialized["body"]:
             return []
@@ -103,18 +116,17 @@ class TxtAIService:
             # txtai's search returns a list of (id, score) tuples
             # We apply pagination (offset and limit) here
             results = self.body_embeddings.search(query, limit + offset)
-            results = results[offset:offset + limit]
+            results = results[offset : offset + limit]
             formatted_results = [
-                {"id": result[0], "score": float(result[1])} 
-                for result in results
+                {"id": result[0], "score": float(result[1])} for result in results
             ]
             return formatted_results
         except Exception as e:
             logger.error("Error searching bodies: %s", str(e))
             return []
-    
+
     # AUTHOR METHODS (HYBRID SEARCH)
-    
+
     def index_author(self, author_id: str, name: str, bio: str = None) -> bool:
         """Index a single author using hybrid search."""
         if not self.available or not self.initialized["author"]:
@@ -124,7 +136,7 @@ class TxtAIService:
             logger.debug("Indexing author %s", author_id)
             # Use bio if provided, otherwise use name
             text_for_embedding = bio if bio else name
-            
+
             # Use txtai's API for indexing
             self.author_embeddings.upsert([(author_id, text_for_embedding, None)])
             self.index_size["authors"] += 1
@@ -136,7 +148,10 @@ class TxtAIService:
     def bulk_index_authors(self, authors: List[Dict[str, str]]) -> Dict[str, Any]:
         """Index multiple authors at once using hybrid search."""
         if not self.available or not self.initialized["author"]:
-            return {"status": "error", "message": "Author search service is not available"}
+            return {
+                "status": "error",
+                "message": "Author search service is not available",
+            }
 
         try:
             # Process authors through txtai API
@@ -147,7 +162,7 @@ class TxtAIService:
                 name = author.get("name", author.get("text", ""))
                 text_for_embedding = bio if bio else name
                 data.append((author_id, text_for_embedding, None))
-                
+
             self.author_embeddings.upsert(data)
             self.index_size["authors"] += len(authors)
             logger.info("Bulk indexed %d authors", len(authors))
@@ -156,7 +171,9 @@ class TxtAIService:
             logger.error("Error during bulk author indexing: %s", str(e))
             return {"status": "error", "message": str(e)}
 
-    def search_author(self, query: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+    def search_author(
+        self, query: str, limit: int = 10, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """Search authors using hybrid approach (semantic + fuzzy)."""
         if not self.available or not self.initialized["author"]:
             return []
@@ -164,10 +181,9 @@ class TxtAIService:
         try:
             # For hybrid search, txtai handles combining semantic and lexical scores
             results = self.author_embeddings.search(query, limit + offset)
-            results = results[offset:offset + limit]
+            results = results[offset : offset + limit]
             formatted_results = [
-                {"id": result[0], "score": float(result[1])} 
-                for result in results
+                {"id": result[0], "score": float(result[1])} for result in results
             ]
             return formatted_results
         except Exception as e:
@@ -175,7 +191,7 @@ class TxtAIService:
             return []
 
     # BACKWARDS COMPATIBILITY METHODS
-    
+
     def index_document(self, document_id: str, text: str) -> bool:
         """
         Index a single document using upsert.
@@ -190,7 +206,9 @@ class TxtAIService:
         """
         return self.bulk_index_bodies(documents)
 
-    def search(self, query: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+    def search(
+        self, query: str, limit: int = 10, offset: int = 0
+    ) -> List[Dict[str, Any]]:
         """
         Search for documents matching the query.
         For backward compatibility - searches body content.
@@ -200,12 +218,16 @@ class TxtAIService:
     def get_info(self) -> Dict[str, Any]:
         """Get information about the search service."""
         return {
-            "status": "available" if (self.available and any(self.initialized.values())) else "unavailable",
+            "status": (
+                "available"
+                if (self.available and any(self.initialized.values()))
+                else "unavailable"
+            ),
             "model_path": self.config.get("path"),
             "initialized": self.initialized,
             "index_size": self.index_size,
         }
-    
+
     def delete_all(self) -> Dict[str, Any]:
         """
         Deletes all documents and embeddings from the database.
@@ -215,7 +237,7 @@ class TxtAIService:
             return {"status": "error", "message": "Search service is not available"}
 
         deletion_stats = {}
-        
+
         try:
             # Delete body data if initialized
             if self.initialized["body"]:
@@ -226,17 +248,19 @@ class TxtAIService:
                 except Exception as e:
                     deletion_stats["bodies_deleted"] = False
                     deletion_stats["bodies_error"] = str(e)
-            
+
             # Delete author data if initialized
             if self.initialized["author"]:
                 try:
-                    self.author_embeddings.delete("*")  # txtai: "*" deletes all documents
+                    self.author_embeddings.delete(
+                        "*"
+                    )  # txtai: "*" deletes all documents
                     deletion_stats["authors_deleted"] = True
                     self.index_size["authors"] = 0
                 except Exception as e:
                     deletion_stats["authors_deleted"] = False
                     deletion_stats["authors_error"] = str(e)
-            
+
             logger.warning("All embeddings have been deleted.")
             return {"status": "success", "details": deletion_stats}
         except Exception as e:

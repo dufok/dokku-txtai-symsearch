@@ -714,13 +714,13 @@ def search_combined(req: SearchRequest):
                     """
                         SELECT id, title, 1.0 AS base_score
                         FROM titles
-                        WHERE title ILIKE :query
+                        WHERE title ILIKE :like_query
                         AND LOWER(title) != :query_lower
                         LIMIT :limit
                     """
                 )
                 params = {
-                    "query": req.text,
+                    "like_query": f"%{req.text}%",
                     "query_lower": query_text,
                     "limit": 100,
                 }

@@ -714,7 +714,7 @@ def search_combined(req: SearchRequest):
                     """
                         SELECT id, title, 1.0 AS base_score
                         FROM titles
-                        WHERE title ILIKE :like_query
+                        WHERE title ILIKE :query
                         AND LOWER(title) != :query_lower
                         LIMIT :limit
                     """
@@ -769,11 +769,11 @@ def search_combined(req: SearchRequest):
             # Combine and trim to limit
             combined = title_results + body_results
             combined.sort(key=lambda x: x["score"], reverse=True)
-            
+
             print(f"Search terms: {search_terms}")
             print(f"All-terms SQL: {all_terms_stmt}")
             print(f"Params: {params}")
-            
+
             return {"results": combined[: req.limit]}
 
     except Exception as e:

@@ -709,24 +709,23 @@ def search_combined(req: SearchRequest):
 
             # Step 2: All-terms title matches
             if search_terms:
-                conditions = []
-                params = {"limit": 100}
-                for i, term in enumerate(search_terms):
-                    conditions.append(f"LOWER(title) LIKE '%' || :term{i} || '%'")
-                    params[f"term{i}"] = term
-                where_clause = " AND ".join(conditions)
+                # Build a tsquery string: join terms with '&' for AND logic
+                ts_query = " & ".join(search_terms)
                 all_terms_stmt = text(
-                    f"""
-                    SELECT id, title, similarity(title, :query) AS base_score
+                    """
+                    SELECT id, title, ts_rank_cd(to_tsvector('russian', title), to_tsquery('russian', :ts_query)) AS base_score
                     FROM titles
-                    WHERE {where_clause}
+                    WHERE to_tsvector('russian', title) @@ to_tsquery('russian', :ts_query)
                     AND LOWER(title) != :query_lower
-                    ORDER BY similarity(title, :query) DESC
+                    ORDER BY base_score DESC
                     LIMIT :limit
-                """
+                    """
                 )
-                params["query"] = req.text
-                params["query_lower"] = query_text
+                params = {
+                    "ts_query": ts_query,
+                    "query_lower": query_text,
+                    "limit": 100,
+                }
                 all_terms_matches = conn.execute(all_terms_stmt, params)
                 for row in all_terms_matches:
                     # Avoid duplicates
